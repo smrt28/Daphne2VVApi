@@ -2,6 +2,12 @@ const http = require('http');
 const _ = require('lodash');
 const uuid = require('uuid')
 
+
+function is_error(res) {
+    if (res instanceof Error) return true;
+    return false;
+}
+
 class Error {
     constructor(message, code, args = {}) {
         this.message = message;
@@ -42,9 +48,7 @@ class RawDaphne2VVApi {
     }
 
     _handle_error(json) {
-        if (json instanceof Error) {
-            return json;
-        }
+        if (is_error(json)) return json;
         if (json['Pin'] != 'true') {
             return new Error("invalid Pid", 430, { raw: json });
         }
@@ -79,7 +83,7 @@ class RawDaphne2VVApi {
         let self = this;
         this.get(conf_char, json => {
             json = this._handle_error(json);
-            if (json instanceof Error) {
+            if (is_error(json)) {
                 result_cb(json);
                 return;
             }
@@ -97,25 +101,13 @@ class RawDaphne2VVApi {
     }
 };
 
+const MASK_TIME_MODE = (1 << 9);
+const MASK_BOOST_MODE = (1 << 6);
+
+
 const COMMANDS = {
     time_mode: { conf_char: 'N', key: 4 },
-    boost_mode: {
-        conf_char: 'N',
-        key: 9,
-        hotfix: function(api, result, cb) {
-            // force reenable time mode
-            if (result.data['4'] == 1) {
-                console.log('hotfix (timemode)');
-                api.call('time_mode', 0, res => {
-                    api.call('time_mode', 1, res => {
-                        cb(result);
-                    });                
-                })
-            } else {
-                cb(result);
-            }
-        }
-    } 
+    boost_mode: { conf_char: 'N', key: 9 } 
 };
 
 
@@ -126,43 +118,118 @@ class Daphne2VVApi {
     
     _num_setter(conf_char, key, val, cb) {
         this.api.set('N', function(config) {
+            if (config[key.toString()] == val) {
+                cb(config);
+                return;
+            }
             config[key.toString()] = val
         }, function(config) {
             cb(config);
         });
     }
 
-    set_boost_mode_on(cb) {
-        this.api.set('N', config => {
-            config['4'] = 0;
-            config['9'] = 1;
-        }, config => {
-            setTimeout(() => {
-                this.api.set('N', config => {
-                    config['4'] = 1;
-                }, config => {
-                    cb(config);                    
-                })
-            }, 1000, "nasrat!");
-        })
-    }
 
-    set_boost_mode_off(cb) {
-        this.api.set('N', config => {
-            config['4'] = 1;
+
+    reset_mode(cb) {
+        let api = this.api;
+        api.set('N', config => {
+            config['4'] = 0;
             config['9'] = 0;
         }, config => {
-            cb(config);                    
+            let cnt = 15;
+
+            let wait = function() {
+                cnt -= 1;
+                api.get('B', res => {
+                    console.log(res.data['0']);
+                    if ((res.data['0'] & (MASK_TIME_MODE | MASK_BOOST_MODE)) == 0) {
+                        cb(res);
+                        return;
+                    }
+                    if (cnt == 0) {
+                        cb(new Error("timeout", 400, {raw: res}));
+                        return;
+                    }
+                    setTimeout(() => {
+                        wait(cb);
+                    }, 200, 'wait');
+                });
+            };
+            wait();
         })
     }
 
+    _set_mode(time, boost, cb) {
+        let api = this.api;
+        let self = this;
+
+        let mask = 0;
+        if (time) mask |= MASK_TIME_MODE;
+        if (boost) mask |= MASK_BOOST_MODE;
+        const MASK = MASK_TIME_MODE | MASK_BOOST_MODE;
+
+        api.set('N', config => {
+            if (boost) {
+                config['9'] = 1;
+            } else {
+                config['9'] = 0;
+            }
+
+            if (time) {
+                config['4'] = 1;
+            } else {
+                config['4'] = 0;
+            }
+            console.log(config);
+        }, config => {
+            let cnt = 25;
+
+            let wait = function() {
+                cnt -= 1;
+                api.get('B', res => {
+                    console.log(mask)
+                    console.log(res.data['0']);
+                    if (is_error(res)) {
+                        cb(res);
+                        return;
+                    }
+                    if ((res.data['0'] & MASK) == mask) {
+                        cb(res);
+                        return;
+                    }
+                    if (cnt == 0) {
+                        cb(new Error("timeout", 400, {raw: res}));
+                        return;
+                    }
+                    setTimeout(() => {
+                        wait(cb);
+                    }, 200, 'wait');
+                });
+            };
+            wait();
+        })
+    }
+
+    set_mode(time, boost, cb) {
+        this._set_mode(false, false, (res) => {
+            if (is_error(res)) {
+                cb(res);
+                return;
+            }
+            if (!time && !boost) {
+                cb(res);
+                return;
+            }
+            this._set_mode(time, boost, cb);
+        });
+    }
 
     reset_uuid() {
         this.api.reset_uuid();
     }
 
-    get(cb) {
-        this.api.get('N', cb);
+    get(config_char, cb) {
+        this.api.get(config_char, cb);
     }
 
     call(command, val, cb) {
@@ -177,24 +244,39 @@ class Daphne2VVApi {
     }
 };
 
+
 api = new Daphne2VVApi({host:"192.168.1.162", pin:"2259"});
+
+function dump() {
+    api.get('B', res=> {
+        console.log(res.data['0']);
+        setTimeout(() => {
+            dump();
+        }, 500, "nasrat2");
+    });
+}
+
+//dump();
+api.set_mode(true, false, res => {
+    console.log(res);
+});
+
 /*
 api.call('time_mode', 1, res => {
     console.log("DONE")
     console.log(res)
+   dump()
 });
 */
 
 
+/*
 api.set_boost_mode_on(res => {
     console.log(res);
 })
+*/
 
 /*
-api.get(res=> {
-    console.log(res);
-});
-
 api.call('boost_mode', 1, res => {
     console.log("DONE")
     console.log(res)
