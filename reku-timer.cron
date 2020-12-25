@@ -1,0 +1,19 @@
+{
+    "actions": {
+        "day": {
+            "proc": "setPower",
+            "args": [ 20 ]
+        },
+        "night" : {
+            "proc": "setPower",
+            "args": [ 40 ]
+        }
+    },
+    "cron": [
+        { "time": "*/10 * * * *", "action": "$sync" },
+        { "time": "*/1  * * * *", "action": "$tick" },
+        { "time": "*/5  * * * *", "action": "$logstat" },
+        { "time": "0    7 * * *", "action": "day" },
+        { "time": "0   22 * * *", "action": "night" }
+    ]
+}
