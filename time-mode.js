@@ -183,14 +183,13 @@ function serve() {
                 ra.apply();                
             }
 
-
-            console.log(ra.power, nextt);
-            follow();
-
-            /*
             log("executing:", idx, when.toString(), action,
                 "precision:", now - when);
-                */
+ 
+            follow();
+
+            
+               
 
 
         });
