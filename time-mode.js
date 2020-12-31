@@ -30,7 +30,8 @@ class Error {
 class CronIterator
 {
     constructor() {
-        this.timer = null;
+        this._timer = null;
+        this._prev_time = new Date();
     }
 
     next() {
@@ -54,15 +55,21 @@ class CronIterator
     }
 
     _schedule_time() {
-        return this.when - (new Date());
+        let now = new Date();
+        if (now < this._prev_time) {
+            throw Error(500, "system time changed");            
+        }
+        this._prev_time = now;
+        let rv = this.when - (new Date());
+        return rv;
     }
 
-    _wait(cb) {
+    _follow(cb) {
         let t = this._schedule_time();
+        log("waiting: ", t)
         if (t < 0) t = 0;
-        if (t > 10000) t = 10000;
-        log("witing: ", t)
-        this.timer = setTimeout(() => {
+        if (t > 100000) t = 100000;
+        this._timer = setTimeout(() => {
             this._exec(cb);
         }, t);
     }
@@ -70,7 +77,7 @@ class CronIterator
     _exec(cb) {
         let t = this._schedule_time();
         let follow = () => {
-            this._wait(cb);
+            this._follow(cb);
         }
         if (t <= 0) {
             let idx = this.idx;
@@ -82,26 +89,32 @@ class CronIterator
         }
     }
 
+    is_running() {
+        if (this._timer) return true;
+        return false;
+    }
 
     run(cb) {
         if (this.idx == -1) this.next();
 
-        while(this._schedule_time() < 0) {
+        while (this._schedule_time() < 0) {
+            let follow = () => {};
             let idx = this.idx;
             let when = this.when;
             this.next();
-            cb(idx, when, this.when - (new Date()), () => {});
+            if (this._schedule_time() >= 0) {
+                follow = () => {
+                    this._follow(cb);
+                }
+            }
+            cb(idx, when, this.when - (new Date()), follow);
         }
-
-        setImmediate(() => {
-            this._exec(cb);
-        });
     }
 
     reset(intervals) {
-        if (this.timer != null) {
-            clearTimeout(this.timer);
-            this.timer = null;
+        if (this._timer != null) {
+            clearTimeout(this._timer);
+            this._timer = null;
         }
         this.intervals = intervals;
         this.ctx = [];
@@ -126,6 +139,7 @@ class RecuContext {
     }
 
     apply() {
+        this.dry = false;
         console.log("apply");
         if (this.old_power != this.power) {
             console.log("updating power: " + this.old_power + " to: " +
@@ -133,9 +147,26 @@ class RecuContext {
         }
     }
 
+    exec_default_actions(action) {
+        if (this.dry) {
+            return;
+        }
+        if (action === '$logstat') {
+            log("logstat...");
+            return true;
+        }
+
+        return false;
+    }
+
     exec_action(action) {
+        if (this.exec_default_actions(action)) {
+            return;
+        }
+
         let aconfig = this.config['actions'];
         let a = aconfig[action];
+
         if (!a) {
             return;
         }
@@ -150,14 +181,12 @@ function serve() {
     let ci = new CronIterator();
     let mtime = null;
     let exiting = false;
-
-
+    let running = false;
 
 
     function run_scheduler(config) {
         let ra = new RecuContext(config);
         let exprs = [];
-        let startup = true;
         let options = {
             currentDate: new Date((new Date()) - (1000 * 60 * 60 * 24 * 7)),
             iterator: false
@@ -174,24 +203,14 @@ function serve() {
 
             ra.exec_action(action);
 
-            if (startup && nextt >= 0) {
-                startup = false;
-                console.log()
-            }
-
             if (nextt > 0) {
                 ra.apply();                
             }
 
-            log("executing:", idx, when.toString(), action,
-                "precision:", now - when);
+        //    log("executing:", idx, when.toString(), action,
+        //        "precision:", now - when);
  
             follow();
-
-            
-               
-
-
         });
     }
 
@@ -204,8 +223,6 @@ function serve() {
         fs.readFile(config_file_name, 'utf8', (err, data) => {
             try {
                 let config = parse(data);
-                //fetch_actions(config);
-                //console.log("here");
                 run_scheduler(config);    
             } catch(err) {
                 mtime = null;
@@ -226,7 +243,7 @@ function serve() {
                 mtime = stats.mtime;
                 handle_config_change();
             } else {
-                log("config unchanged");
+                log("config unchanged; running = " + ci.is_running());
             }
             if (!exiting) {
                 setTimeout(check_config_file_changed, 5000);

@@ -16,7 +16,7 @@
     "cron": [
         { "time": "*/20 * * * *", "action": "$sync" },
         { "time": "*/15  * * * *", "action": "$tick" },
-        { "time": "*/5  * * * *", "action": "$logstat" },
+        { "time": "*/15  * * * * *", "action": "$logstat" },
         { "time": "0    7 * * *", "action": "day" },
         { "time": "0   22 * * *", "action": "night" }
     ]
