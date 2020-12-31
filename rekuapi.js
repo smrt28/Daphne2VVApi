@@ -95,21 +95,10 @@ class RawDaphne2VVApi {
             })
             let req_path = '/' + conf_char + JSON.stringify(json)
 
-            //console.log(req_path);
             self._query(req_path, result_cb);
         })
     }
 };
-
-const MASK_TIME_MODE = (1 << 9);
-const MASK_BOOST_MODE = (1 << 6);
-
-
-const COMMANDS = {
-    time_mode: { conf_char: 'N', key: 4 },
-    boost_mode: { conf_char: 'N', key: 9 } 
-};
-
 
 class Daphne2VVApi {
     constructor(args) {
@@ -142,104 +131,47 @@ class Daphne2VVApi {
             }
     }
 
-    _set_mode(mask, cb) {
-        let api = this.api;
-        let self = this;
-        const MASK = MASK_TIME_MODE | MASK_BOOST_MODE;
-
-        api.set('N', config => {
-            this._def_mask_to_config(mask, config);
-            console.log("....")
-            console.log(config);
-        }, config => {
-            let cnt = 125;
-
-            let wait = function() {
-                cnt -= 1;
-                api.get('B', res => {
-                    console.log(res);
-                    if (is_error(res)) {
-                        cb(res);
-                        return;
-                    }
-                    if ((res.data['0'] & MASK) == mask) {
-                        cb(res);
-                        return;
-                    }
-                    if (cnt == 0) {
-                        cb(new Error("timeout", 400, {raw: res}));
-                        return;
-                    }
-                    setTimeout(() => {
-                        wait(cb);
-                    }, 200, 'wait');
-                });
-            };
-            wait();
-        })
-    }
-
-    set_mode(mask, cb) {
-        this._set_mode(0, (res) => {
-            if (is_error(res)) {
-                cb(res);
-                return;
-            }
-            if (mask == 0) {
-                cb(res);
-                return;
-            }
-            this._set_mode(mask, cb);
-        });
-    }
-
-    reset_uuid() {
-        this.api.reset_uuid();
-    }
-
     get(config_char, cb) {
         this.api.get(config_char, cb);
     }
 
-    call(command, val, cb) {
-        let cmd = COMMANDS[command];
-        this._num_setter(cmd.conf_char, cmd.key, val, res => {
-            if (cmd.hotfix) {
-                cmd.hotfix(this, res, cb);
-            } else {
-                cb(res);
-            }
-        });
-    }
-
     set_power(n, cb) {
+        if (n < 200 || n > 1000) {
+            throw Error(500, "invalid power value");
+        }
         this.api.set('N', config => {
-            console.log(config);
             config['2'] = n;
         }, config => {
-
+            cb(config);
         });
+    }
 
-
+    get_status(cb) {
+        let n = null;
+        let b = null;
+        api.get('B', b=> {
+            api.get('N', n=> {
+                let stat = {
+                    demandFlow: n.data['2'],
+                    actualFlow: b.data['11'],
+                    setPoint: n.data['3']
+                }
+                cb(stat);
+            });
+        });
     }
 };
-
-
+/*
 api = new Daphne2VVApi({host:"192.168.1.162", pin:"2259"});
 
-function dump() {
-    api.get('N', res=> {
-        console.log(res.data);
-        setTimeout(() => {
-            dump();
-        }, 500, "nasrat2");
-    });
-}
-
-api.set_power(350, res => {
-    console.log(res);
-
+api.set_power(200, res => {
+    api.get_status(stat => {
+        console.log(stat);
+    })
 });
+*/
+
+module.exports = Daphne2VVApi;
 
 //dump();
 

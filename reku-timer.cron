@@ -1,4 +1,8 @@
 {
+    "networ" : {
+        "ip": "192.168.1.162",
+        "pin": "2259"
+    },
     "actions": {
         "day": {
             "proc": "setPower",
@@ -10,8 +14,8 @@
         }
     },
     "cron": [
-        { "time": "*/10 * * * *", "action": "$sync" },
-        { "time": "*/1  * * * *", "action": "$tick" },
+        { "time": "*/20 * * * *", "action": "$sync" },
+        { "time": "*/15  * * * *", "action": "$tick" },
         { "time": "*/5  * * * *", "action": "$logstat" },
         { "time": "0    7 * * *", "action": "day" },
         { "time": "0   22 * * *", "action": "night" }

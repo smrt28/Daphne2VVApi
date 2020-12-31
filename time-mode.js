@@ -17,6 +17,8 @@ const cron_parser = require('cron-parser');
 const parser = require('cron-parser');
 const log = console.log;
 
+const rekuapi = require('./rekuapi');
+
 class Error {
     constructor(message, code = 500, args = {}) {
         this.message = message;
@@ -51,29 +53,48 @@ class CronIterator
         ctx[idx] = this.intervals[idx].next();
     }
 
-    _exec(cb) {
-        for (;;) {
-            let t = this.when - (new Date());
-            if (t > 0) return t;
-            cb(this.idx, this.when);
-            this.next();
-        }
+    _schedule_time() {
+        return this.when - (new Date());
     }
 
-    _run(cb) {
-        let t = this._exec(cb);
-        log("next task scheduled: ", this.idx, this.when.toString(),
-            "delta=", t);
-        if (t > 100000) t = 100000;
+    _wait(cb) {
+        let t = this._schedule_time();
+        if (t < 0) t = 0;
+        if (t > 10000) t = 10000;
+        log("witing: ", t)
         this.timer = setTimeout(() => {
-            this._run(cb);            
+            this._exec(cb);
         }, t);
     }
 
+    _exec(cb) {
+        let t = this._schedule_time();
+        let follow = () => {
+            this._wait(cb);
+        }
+        if (t <= 0) {
+            let idx = this.idx;
+            let when = this.when;
+            this.next();
+            cb(idx, when, this.when - (new Date()), follow);
+        } else {
+            follow();
+        }
+    }
+
+
     run(cb) {
         if (this.idx == -1) this.next();
+
+        while(this._schedule_time() < 0) {
+            let idx = this.idx;
+            let when = this.when;
+            this.next();
+            cb(idx, when, this.when - (new Date()), () => {});
+        }
+
         setImmediate(() => {
-            this._run(cb);
+            this._exec(cb);
         });
     }
 
@@ -91,23 +112,87 @@ class CronIterator
     }
 }
 
+class RecuContext {
+    constructor(config) {
+        this.old_power = -1;
+        this.power = 0;
+        this.config = config;
+        this.dry = true;
+        this.ACTION = {
+            setPower: (args) => {
+                this.power = args[0];
+            }
+        }
+    }
+
+    apply() {
+        console.log("apply");
+        if (this.old_power != this.power) {
+            console.log("updating power: " + this.old_power + " to: " +
+                this.power);
+        }
+    }
+
+    exec_action(action) {
+        let aconfig = this.config['actions'];
+        let a = aconfig[action];
+        if (!a) {
+            return;
+        }
+        let proc = a['proc'];
+        let args = a['args'];
+        this.ACTION[proc](args);
+    }
+}
+
 function serve() {
     let config_file_name = 'reku-timer.cron';
     let ci = new CronIterator();
     let mtime = null;
+    let exiting = false;
+
+
+
 
     function run_scheduler(config) {
-        let exprs = [] 
+        let ra = new RecuContext(config);
+        let exprs = [];
+        let startup = true;
+        let options = {
+            currentDate: new Date((new Date()) - (1000 * 60 * 60 * 24 * 7)),
+            iterator: false
+        };
+
         config.cron.forEach(rec => {
-            exprs.push(cron_parser.parseExpression(rec.time));
+            exprs.push(cron_parser.parseExpression(rec.time, options));
         })
 
         ci.reset(exprs);
-        ci.run((idx, when) => {
+        ci.run((idx, when, nextt, follow) => {
             let now = new Date();
             let action = config.cron[idx].action;
+
+            ra.exec_action(action);
+
+            if (startup && nextt >= 0) {
+                startup = false;
+                console.log()
+            }
+
+            if (nextt > 0) {
+                ra.apply();                
+            }
+
+
+            console.log(ra.power, nextt);
+            follow();
+
+            /*
             log("executing:", idx, when.toString(), action,
                 "precision:", now - when);
+                */
+
+
         });
     }
 
@@ -120,6 +205,8 @@ function serve() {
         fs.readFile(config_file_name, 'utf8', (err, data) => {
             try {
                 let config = parse(data);
+                //fetch_actions(config);
+                //console.log("here");
                 run_scheduler(config);    
             } catch(err) {
                 mtime = null;
@@ -142,8 +229,9 @@ function serve() {
             } else {
                 log("config unchanged");
             }
-
-            setTimeout(check_config_file_changed, 5000);
+            if (!exiting) {
+                setTimeout(check_config_file_changed, 5000);
+            }
         });
     }
 
