@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <link rel="stylesheet" href="styles.css">
+        <title id="TitleName">Webserver</title>
+        <script>
+            function progressBar(id, value, value2, text, color) {
+                var canvas = document.getElementById(id);
+                var context = canvas.getContext('2d');
+                var al = 0;
+                var start = 4.72;
+                var cw = context.canvas.width / 2;
+                var ch = context.canvas.height / 2;
+                var diff;
+                al = value;
+                diff = (al / 100) * Math.PI * 2;
+                context.clearRect(0, 0, 400, 200);
+                context.beginPath();
+                context.arc(cw, ch, 50, 0, 2 * Math.PI, false);
+                context.fillStyle = 'lightgray';
+                context.fill();
+                context.strokeStyle = '#808080';
+                context.stroke();
+                context.fillStyle = '#000';
+                context.strokeStyle = color;
+                context.textAlign = 'center';
+                context.lineWidth = 15;
+                context.font = '10pt Verdana';
+                context.beginPath();
+                context.arc(cw, ch, 50, start, diff + start, false);
+                context.stroke();
+                context.fillText(value2 + text, cw + 2, ch + 6);
+            }
+
+            setInterval(function() {
+                progressBar('myCanvas', 20, 20, "%", '#0000ff');                
+            }, 500);
+        </script>
+    </head>
+    <body>
+        <div style="position:absolute;top:270px;left:140px;">
+            <canvas id="myCanvas" width="200" height="200"></canvas>
+        </div>
+    </body>
+</html>

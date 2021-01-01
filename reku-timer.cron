@@ -1,5 +1,5 @@
 {
-    "networ" : {
+    "network" : {
         "ip": "192.168.1.162",
         "pin": "2259"
     },
@@ -14,8 +14,7 @@
         }
     },
     "cron": [
-        { "time": "*/20 * * * *", "action": "$sync" },
-        { "time": "*/15  * * * *", "action": "$tick" },
+        { "time": "*/15  * * * * *", "action": "$tick" },
         { "time": "*/15  * * * * *", "action": "$logstat" },
         { "time": "0    7 * * *", "action": "day" },
         { "time": "0   22 * * *", "action": "night" }

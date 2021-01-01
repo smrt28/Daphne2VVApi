@@ -29,38 +29,60 @@ class Error {
 
 class CronIterator
 {
+    static STAGE_STARTUP = 1;
+    static STAGE_RUN = 2;
+    static LOOKAHEAD_CNT = 11;
+
     constructor() {
         this._timer = null;
         this._prev_time = new Date();
+        this._lookahead = []
+        this._running_past = true;
+    }
+
+    lookahead() {
+        let n = CronIterator.LOOKAHEAD_CNT;
+        let ctx = this.ctx;
+        while (this._lookahead.length < n) {
+            let idx = 0;
+            let res = ctx[0];
+            for (let i = 0; i < ctx.length; ++i) {
+                let item = ctx[i];
+                if (item.toDate() < res.toDate()) {
+                    idx = i;
+                    res = item;
+                }
+            }
+
+            this._lookahead.push({
+                when: res.toDate(),
+                idx: idx
+            });
+            ctx[idx] = this.intervals[idx].next();
+        }
     }
 
     next() {
-        let ctx = this.ctx;
-        if (ctx.length == 0) {
-            throw new Error("nothing scheduled");
-        }
-        let idx = 0;
-        let res = ctx[0];
-        for (let i = 0; i < ctx.length; ++i) {
-            let item = ctx[i];
-            if (item.toDate() < res.toDate()) {
-                idx = i;
-                res = item;
-            }
-        }
+        this.lookahead();
+        return this._lookahead.shift();
+    }
 
-        this.when = res.toDate();
-        this.idx = idx;
-        ctx[idx] = this.intervals[idx].next();
+    lookup_next() {
+        this.lookahead();
+        return this._lookahead[0];
     }
 
     _schedule_time() {
+        this.lookahead();
+        if (this._lookahead.length == 0) {
+            throw Error(500, "nothing to schedule");
+        }
         let now = new Date();
         if (now < this._prev_time) {
             throw Error(500, "system time changed");            
         }
         this._prev_time = now;
-        let rv = this.when - (new Date());
+        let rv = this._lookahead[0].when - now;
         return rv;
     }
 
@@ -72,6 +94,7 @@ class CronIterator
         this._timer = setTimeout(() => {
             this._exec(cb);
         }, t);
+        return true;
     }
 
     _exec(cb) {
@@ -80,10 +103,9 @@ class CronIterator
             this._follow(cb);
         }
         if (t <= 0) {
-            let idx = this.idx;
-            let when = this.when;
-            this.next();
-            cb(idx, when, this.when - (new Date()), follow);
+            let now = new Date();
+            let job = this.next();
+            cb(job.idx, job.when, CronIterator.STAGE_RUN, follow);
         } else {
             follow();
         }
@@ -97,21 +119,31 @@ class CronIterator
     run(cb) {
         if (this.idx == -1) this.next();
 
+        let cnt = 0;
+
         while (this._schedule_time() < 0) {
-            let follow = () => {};
-            let idx = this.idx;
-            let when = this.when;
-            this.next();
+            let follow = () => { return false; };
+            let now = new Date();
+            let job = this.next();
             if (this._schedule_time() >= 0) {
                 follow = () => {
                     this._follow(cb);
                 }
             }
-            cb(idx, when, this.when - (new Date()), follow);
+            cnt += 1
+            cb(job.idx, job.when, CronIterator.STAGE_STARTUP, follow);
+        }
+
+        this._running_past = false;
+        if (cnt == 0) {
+            this._follow(cb);
         }
     }
 
     reset(intervals) {
+        if (intervals.length == 0) {
+            throw Error(500, "nothing to shchedule");
+        }
         if (this._timer != null) {
             clearTimeout(this._timer);
             this._timer = null;
@@ -128,7 +160,7 @@ class CronIterator
 class RecuContext {
     constructor(config) {
         this.old_power = -1;
-        this.power = 0;
+        this.power = -1;
         this.config = config;
         this.dry = true;
         this.ACTION = {
@@ -138,12 +170,16 @@ class RecuContext {
         }
     }
 
-    apply() {
-        this.dry = false;
-        console.log("apply");
-        if (this.old_power != this.power) {
-            console.log("updating power: " + this.old_power + " to: " +
-                this.power);
+    get_stat() {
+        let rv = {
+            power: this.power
+        };
+        return rv;
+    }
+
+    static check_stat(s) {
+        if (s.power < 0 || s.power > 100) {
+            throw Error(500, "invalid power value");
         }
     }
 
@@ -197,19 +233,19 @@ function serve() {
         })
 
         ci.reset(exprs);
-        ci.run((idx, when, nextt, follow) => {
-            let now = new Date();
-            let action = config.cron[idx].action;
+        ci.run((idx, when, stage, follow) => {
+            let prev_stat = ra.get_stat(); 
 
+            let action = config.cron[idx].action;
             ra.exec_action(action);
 
-            if (nextt > 0) {
-                ra.apply();                
+            if (stage == CronIterator.STAGE_RUN) {
+                let next_stat = ra.get_stat();
+                RecuContext.check_stat(next_stat);
+                log(next_stat, action);
+                log(ci._lookahead);
             }
 
-        //    log("executing:", idx, when.toString(), action,
-        //        "precision:", now - when);
- 
             follow();
         });
     }
